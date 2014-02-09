@@ -59,7 +59,7 @@ class CommandManager(object):
         except Exception:
             exc_info = sys.exc_info()
             LOG.exception("Exception in transaction", exc_info=exc_info)
-            self.rollback()
+            self._rollback()
             raise exc_info[1]
 
     def do(self, func):
@@ -72,7 +72,7 @@ class CommandManager(object):
         self.undo_commands.append(cmd)
         return cmd
 
-    def rollback(self):
+    def _rollback(self):
         do_commands = reversed(self.do_commands)
         for cmd in reversed(self.undo_commands):
             do = do_commands.next()
