@@ -70,6 +70,20 @@ class TestQuarkGetPorts(test_quark_plugin.TestQuarkPlugin):
                                           fields=None)
             self.assertEqual(ports, [])
 
+    def test_port_list_with_device_owner_dhcp(self):
+        ip = dict(id=1, address=3232235876, address_readable="192.168.1.100",
+                  subnet_id=1, network_id=2, version=4)
+        filters = {'network_id': ip['network_id'],
+                   'device_owner': 'network:dhcp'}
+        port = dict(mac_address="AA:BB:CC:DD:EE:FF", network_id=1,
+                    tenant_id=self.context.tenant_id, device_id=2,
+                    bridge="xenbr0", device_owner='network:dhcp')
+        with self._stubs(ports=[port], addrs=[ip]):
+            ports = self.plugin.get_ports(self.context, filters=filters,
+                                          fields=None)
+            self.assertEqual(len(ports), 1)
+            self.assertEqual(ports[0]["device_owner"], "network:dhcp")
+
     def test_port_list_with_ports(self):
         ip = dict(id=1, address=3232235876, address_readable="192.168.1.100",
                   subnet_id=1, network_id=2, version=4)
@@ -341,7 +355,7 @@ class TestQuarkUpdatePort(test_quark_plugin.TestQuarkPlugin):
             mock.patch("quark.db.api.port_find"),
             mock.patch("quark.db.api.port_update"),
             mock.patch("quark.ipam.QuarkIpam.allocate_ip_address"),
-            mock.patch("quark.ipam.QuarkIpam.deallocate_ip_address")
+            mock.patch("quark.ipam.QuarkIpam.deallocate_ips_by_port")
         ) as (port_find, port_update, alloc_ip, dealloc_ip):
             port_find.return_value = port_model
             port_update.return_value = port_model
@@ -641,7 +655,7 @@ class TestQuarkDeletePort(test_quark_plugin.TestQuarkPlugin):
         ipam = "quark.ipam.QuarkIpam"
         with contextlib.nested(
             mock.patch("%s.port_find" % db_mod),
-            mock.patch("%s.deallocate_ip_address" % ipam),
+            mock.patch("%s.deallocate_ips_by_port" % ipam),
             mock.patch("%s.deallocate_mac_address" % ipam),
             mock.patch("%s.port_delete" % db_mod),
             mock.patch("quark.drivers.base.BaseDriver.delete_port")

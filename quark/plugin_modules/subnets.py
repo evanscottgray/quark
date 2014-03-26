@@ -25,6 +25,7 @@ from neutron.openstack.common import timeutils
 from oslo.config import cfg
 
 from quark.db import api as db_api
+from quark.db import models as models
 from quark import network_strategy
 from quark.plugin_modules import routes
 from quark import plugin_views as v
@@ -124,10 +125,21 @@ def create_subnet(context, subnet):
             new_subnet["dns_nameservers"].append(db_api.dns_create(
                 context, ip=netaddr.IPAddress(dns_ip)))
 
-        if isinstance(allocation_pools, list):
-            cidrset = netaddr.IPSet([netaddr.IPNetwork(new_subnet["cidr"])])
+        if isinstance(allocation_pools, list) and allocation_pools:
+            subnet_net = netaddr.IPNetwork(new_subnet["cidr"])
+            cidrset = \
+                netaddr.IPSet(netaddr.IPRange(
+                    netaddr.IPAddress(subnet_net.first),
+                    netaddr.IPAddress(subnet_net.last)).cidrs())
             for p in allocation_pools:
-                cidrset -= netaddr.IPSet(netaddr.IPRange(p["start"], p["end"]))
+                start = netaddr.IPAddress(p["start"])
+                end = netaddr.IPAddress(p["end"])
+                cidrset -= \
+                    netaddr.IPSet(netaddr.IPRange(
+                        netaddr.IPAddress(start),
+                        netaddr.IPAddress(end)).cidrs())
+            default_cidrset = models.IPPolicy.get_ip_policy_cidrs(new_subnet)
+            cidrset.update(default_cidrset)
             cidrs = [str(x.cidr) for x in cidrset.iter_cidrs()]
             new_subnet["ip_policy"] = db_api.ip_policy_create(context,
                                                               exclude=cidrs)
@@ -219,7 +231,8 @@ def get_subnet(context, id, fields=None):
     """
     LOG.info("get_subnet %s for tenant %s with fields %s" %
             (id, context.tenant_id, fields))
-    subnet = db_api.subnet_find(context, id=id, scope=db_api.ONE)
+    subnet = db_api.subnet_find(context, id=id, join_dns=True,
+                                join_routes=True, scope=db_api.ONE)
     if not subnet:
         raise exceptions.SubnetNotFound(subnet_id=id)
 
@@ -252,7 +265,8 @@ def get_subnets(context, filters=None, fields=None):
     """
     LOG.info("get_subnets for tenant %s with filters %s fields %s" %
             (context.tenant_id, filters, fields))
-    subnets = db_api.subnet_find(context, **filters)
+    subnets = db_api.subnet_find(context, join_dns=True, join_routes=True,
+                                 **filters)
     return v._make_subnets_list(subnets, fields=fields,
                                 default_route=routes.DEFAULT_ROUTE)
 

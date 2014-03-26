@@ -30,10 +30,14 @@ from neutron.openstack.common import timeutils
 from quark.db import custom_types
 #NOTE(mdietz): This is the only way to actually create the quotas table,
 #              regardless if we need it. This is how it's done upstream.
+#NOTE(jhammond): If it isn't obvious quota_driver is unused and that's ok.
+#                 DO NOT DELETE IT!!!
+from quark import quota_driver  # noqa
 
 HasId = models.HasId
 
 LOG = logging.getLogger(__name__)
+TABLE_KWARGS = {"mysql_engine": "InnoDB"}
 
 
 def _default_list_getset(collection_class, proxy):
@@ -53,7 +57,7 @@ def _default_list_getset(collection_class, proxy):
 
 class QuarkBase(neutron.db.model_base.NeutronBaseV2):
     created_at = sa.Column(sa.DateTime(), default=timeutils.utcnow)
-    __table_args__ = {"mysql_engine": "InnoDB"}
+    __table_args__ = TABLE_KWARGS
 
 
 BASEV2 = declarative.declarative_base(cls=QuarkBase)
@@ -114,15 +118,18 @@ class IPAddress(BASEV2, models.HasId):
     Gives us an IP address owner audit log for free, essentially.
     """
     __tablename__ = "quark_ip_addresses"
+    __table_args__ = (sa.UniqueConstraint("subnet_id", "address"),
+                      TABLE_KWARGS)
+
     address_readable = sa.Column(sa.String(128), nullable=False)
-    address = sa.Column(custom_types.INET(), nullable=False)
+    address = sa.Column(custom_types.INET(), nullable=False, index=True)
     subnet_id = sa.Column(sa.String(36),
                           sa.ForeignKey("quark_subnets.id",
                                         ondelete="CASCADE"))
     network_id = sa.Column(sa.String(36),
                            sa.ForeignKey("quark_networks.id",
                                          ondelete="CASCADE"))
-    version = sa.Column(sa.Integer())
+    version = sa.Column(sa.Integer(), index=True)
     allocated_at = sa.Column(sa.DateTime())
     subnet = orm.relationship("Subnet", lazy="joined")
     # Need a constant to facilitate the indexed search for new IPs
@@ -153,7 +160,7 @@ class IPAddress(BASEV2, models.HasId):
             return str(ip.ipv4())
         return str(ip.ipv6())
 
-    deallocated_at = sa.Column(sa.DateTime())
+    deallocated_at = sa.Column(sa.DateTime(), index=True)
 
 
 class Route(BASEV2, models.HasTenant, models.HasId, IsHazTags):
@@ -236,13 +243,15 @@ class Subnet(BASEV2, models.HasId, IsHazTags):
     # Legacy data
     do_not_use = sa.Column(sa.Boolean(), default=False)
 
+
 port_ip_association_table = sa.Table(
     "quark_port_ip_address_associations",
     BASEV2.metadata,
     sa.Column("port_id", sa.String(36),
               sa.ForeignKey("quark_ports.id")),
     sa.Column("ip_address_id", sa.String(36),
-              sa.ForeignKey("quark_ip_addresses.id")))
+              sa.ForeignKey("quark_ip_addresses.id")),
+    **TABLE_KWARGS)
 
 
 port_group_association_table = sa.Table(
@@ -251,7 +260,8 @@ port_group_association_table = sa.Table(
     sa.Column("port_id", sa.String(36),
               sa.ForeignKey("quark_ports.id")),
     sa.Column("group_id", sa.String(36),
-              sa.ForeignKey("quark_security_groups.id")))
+              sa.ForeignKey("quark_security_groups.id")),
+    **TABLE_KWARGS)
 
 
 class SecurityGroupRule(BASEV2, models.HasId, models.HasTenant):
@@ -284,7 +294,7 @@ class SecurityGroup(BASEV2, models.HasId):
 class Port(BASEV2, models.HasTenant, models.HasId):
     __tablename__ = "quark_ports"
     id = sa.Column(sa.String(36), primary_key=True)
-    name = sa.Column(sa.String(255))
+    name = sa.Column(sa.String(255), index=True)
     admin_state_up = sa.Column(sa.Boolean(), default=True)
     network_id = sa.Column(sa.String(36), sa.ForeignKey("quark_networks.id"),
                            nullable=False)
@@ -320,17 +330,20 @@ class Port(BASEV2, models.HasTenant, models.HasId):
 sa.Index("idx_ports_1", Port.__table__.c.device_id, Port.__table__.c.tenant_id)
 sa.Index("idx_ports_2", Port.__table__.c.device_owner,
          Port.__table__.c.network_id)
+sa.Index("idx_ports_3", Port.__table__.c.tenant_id)
 
 
 class MacAddress(BASEV2, models.HasTenant):
     __tablename__ = "quark_mac_addresses"
+    __table_args__ = (sa.UniqueConstraint("mac_address_range_id", "address"),
+                      TABLE_KWARGS)
     address = sa.Column(sa.BigInteger(), primary_key=True)
     mac_address_range_id = sa.Column(
         sa.String(36),
         sa.ForeignKey("quark_mac_address_ranges.id", ondelete="CASCADE"),
         nullable=False)
     deallocated = sa.Column(sa.Boolean())
-    deallocated_at = sa.Column(sa.DateTime())
+    deallocated_at = sa.Column(sa.DateTime(), index=True)
     orm.relationship(Port, backref="mac_address")
 
 
@@ -384,11 +397,9 @@ class IPPolicy(BASEV2, models.HasId, models.HasTenant):
 
         ip_policy_cidrs = ip_policy_cidrs + default_policy_cidrs
 
-        ip_set = netaddr.IPSet()
-        for cidr in ip_policy_cidrs:
-            ip_set.add(cidr)
+        ip_set = netaddr.IPSet(ip_policy_cidrs)
 
-        return ip_set
+        return ip_set & netaddr.IPSet([subnet_cidr])
 
 
 class IPPolicyCIDR(BASEV2, models.HasId):

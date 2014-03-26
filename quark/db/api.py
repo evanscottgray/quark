@@ -51,7 +51,8 @@ for _name, klass in inspect.getmembers(models, inspect.isclass):
 
 def _listify(filters):
     for key in ["name", "network_id", "id", "device_id", "tenant_id",
-                "subnet_id", "mac_address", "shared", "version", "segment_id"]:
+                "subnet_id", "mac_address", "shared", "version", "segment_id",
+                "device_owner"]:
         if key in filters:
             if not filters[key]:
                 continue
@@ -127,6 +128,9 @@ def _model_query(context, model, filters, fields=None):
     if filters.get("tenant_id"):
         model_filters.append(model.tenant_id.in_(filters["tenant_id"]))
 
+    if filters.get("device_owner"):
+        model_filters.append(model.device_owner.in_(filters["device_owner"]))
+
     return model_filters
 
 
@@ -161,7 +165,6 @@ def scoped(f):
 def port_find(context, **filters):
     query = context.session.query(models.Port).\
         options(orm.joinedload(models.Port.ip_addresses))
-
     model_filters = _model_query(context, models.Port, filters)
     if filters.get("ip_address_id"):
         model_filters.append(models.Port.ip_addresses.any(
@@ -169,6 +172,9 @@ def port_find(context, **filters):
 
     if filters.get("device_id"):
         model_filters.append(models.Port.device_id.in_(filters["device_id"]))
+
+    if "join_security_groups" in filters:
+        query = query.options(orm.joinedload(models.Port.security_groups))
 
     return query.filter(*model_filters).order_by(asc(models.Port.created_at))
 
@@ -224,15 +230,16 @@ def ip_address_create(context, **address_dict):
 def ip_address_find(context, lock_mode=False, **filters):
     query = context.session.query(models.IPAddress)
 
+    if lock_mode:
+        query = query.with_lockmode("update")
+
     ip_shared = filters.pop("shared", None)
     if ip_shared is not None:
         cnt = sql_func.count(models.port_ip_association_table.c.port_id)
         stmt = context.session.query(models.IPAddress,
                                      cnt.label("ports_count"))
-        if lock_mode:
-            stmt = stmt.with_lockmode("update")
         stmt = stmt.outerjoin(models.port_ip_association_table)
-        stmt = stmt.group_by(models.IPAddress).subquery()
+        stmt = stmt.group_by(models.IPAddress.id).subquery()
 
         query = query.outerjoin(stmt, stmt.c.id == models.IPAddress.id)
 
@@ -254,7 +261,7 @@ def ip_address_find(context, lock_mode=False, **filters):
 def mac_address_find(context, lock_mode=False, **filters):
     query = context.session.query(models.MacAddress)
     if lock_mode:
-        query.with_lockmode("update")
+        query = query.with_lockmode("update")
     model_filters = _model_query(context, models.MacAddress, filters)
     return query.filter(*model_filters)
 
@@ -264,12 +271,14 @@ def mac_address_range_find_allocation_counts(context, address=None):
                                   sql_func.count(models.MacAddress.address).
                                   label("count")).with_lockmode("update")
     query = query.outerjoin(models.MacAddress)
-    query = query.group_by(models.MacAddressRange)
+    query = query.group_by(models.MacAddressRange.id)
     query = query.order_by("count DESC")
     if address:
         query = query.filter(models.MacAddressRange.last_address >= address)
         query = query.filter(models.MacAddressRange.first_address <= address)
-    return query
+    query = query.filter(models.MacAddressRange.next_auto_assign_mac != -1)
+    query = query.limit(1)
+    return query.first()
 
 
 @scoped
@@ -288,6 +297,12 @@ def mac_address_range_create(context, **range_dict):
 
 def mac_address_range_delete(context, mac_address_range):
     context.session.delete(mac_address_range)
+
+
+def mac_address_range_update(context, mac_range, **kwargs):
+    mac_range.update(kwargs)
+    context.session.add(mac_range)
+    return mac_range
 
 
 def mac_address_update(context, mac, **kwargs):
@@ -342,6 +357,9 @@ def _network_find(context, fields, defaults=None, **filters):
     else:
         query = query.filter(*model_filters)
 
+    if "join_subnets" in filters:
+        query = query.options(orm.joinedload(models.Network.subnets))
+
     return query
 
 
@@ -378,7 +396,7 @@ def subnet_find_allocation_counts(context, net_id, **filters):
                                   label("count")).with_lockmode('update')
     query = query.filter_by(do_not_use=False)
     query = query.outerjoin(models.Subnet.generated_ips)
-    query = query.group_by(models.Subnet)
+    query = query.group_by(models.Subnet.id)
     query = query.order_by("count DESC")
 
     query = query.filter(models.Subnet.network_id == net_id)
@@ -388,7 +406,7 @@ def subnet_find_allocation_counts(context, net_id, **filters):
         query = query.filter(models.Subnet.segment_id == filters["segment_id"])
     if "subnet_id" in filters and filters["subnet_id"]:
         query = query.filter(models.Subnet.id.in_(filters["subnet_id"]))
-
+    query = query.filter(models.Subnet.next_auto_assign_ip != -1)
     return query
 
 
@@ -396,9 +414,15 @@ def subnet_find_allocation_counts(context, net_id, **filters):
 def subnet_find(context, **filters):
     if "shared" in filters and True in filters["shared"]:
         return []
-    query = context.session.query(models.Subnet).\
-        options(orm.joinedload(models.Subnet.routes))
+    query = context.session.query(models.Subnet)
     model_filters = _model_query(context, models.Subnet, filters)
+
+    if "join_dns" in filters:
+        query = query.options(orm.joinedload(models.Subnet.dns_nameservers))
+
+    if "join_routes" in filters:
+        query = query.options(orm.joinedload(models.Subnet.routes))
+
     return query.filter(*model_filters)
 
 
