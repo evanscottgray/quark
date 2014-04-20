@@ -222,8 +222,8 @@ class QuarkIpam(object):
                             else:
                                 addr = addr.ipv6()
 
-                            # NOTE(jkoelker) Should we delete the ip record?
                             if policy is not None and addr in policy:
+                                context.session.delete(address)
                                 continue
 
                             if addr in cidr:
