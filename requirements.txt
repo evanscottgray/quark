@@ -4,6 +4,8 @@ http://tarballs.openstack.org/oslo.config/oslo.config-1.2.0a2.tar.gz#egg=oslo.co
 zope.sqlalchemy
 mysql-python
 aiclib
+gunicorn
+pymysql
 
 # NOTE(jkoelker) not technically required, but something has to commit
 #                the transactions. in the future this should be the
