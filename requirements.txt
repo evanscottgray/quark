@@ -5,7 +5,7 @@ zope.sqlalchemy
 mysql-python
 aiclib
 gunicorn
-pymysql
+pymysql<0.6.2
 
 # NOTE(jkoelker) not technically required, but something has to commit
 #                the transactions. in the future this should be the
