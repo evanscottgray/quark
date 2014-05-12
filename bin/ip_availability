@@ -40,14 +40,22 @@ def main():
     neutron_db_api.register_models(base=models.BASEV2)
     used_ips = get_used_ips(neutron_db_api.get_session())
     unused_ips = get_unused_ips(neutron_db_api.get_session(), used_ips)
-    print(json.dumps(dict(used=used_ips, unused=unused_ips)))
+
+    def _expand(d):
+        newd = dict()
+        for tuple_key in d:
+            tenant_id, network_id, ip_version = tuple_key
+            if tenant_id not in newd:
+                newd[tenant_id] = dict()
+            if network_id not in newd[tenant_id]:
+                newd[tenant_id][network_id] = dict()
+            newd[tenant_id][network_id][ip_version] = d[tuple_key]
+        return newd
+    print(json.dumps(dict(used=_expand(used_ips), unused=_expand(unused_ips))))
 
 
 def _rackspace_filter(query):
     # NOTE(asadoughi): should be moved to config?
-    public_network_id = "00000000-0000-0000-0000-000000000000"
-    query = query.filter(models.Subnet.network_id == public_network_id)
-    query = query.filter(models.Subnet.ip_version == 4)
     query = query.filter(or_(models.Subnet.tenant_id.like("%-%"),
                              models.Subnet.tenant_id == "rackspace"))
     return query
@@ -64,6 +72,8 @@ def get_used_ips(session):
     with session.begin():
         query = session.query(
             models.Subnet.tenant_id,
+            models.Subnet.network_id,
+            models.Subnet.ip_version,
             func.count(models.IPAddress.id).label("count"))
         query = query.filter(models.Subnet.id == models.IPAddress.subnet_id)
         query = query.filter(or_(models.Subnet.do_not_use == None,
@@ -75,8 +85,14 @@ def get_used_ips(session):
             func.date_add(
                 models.IPAddress.deallocated_at, window) > func.now()))
         query = _rackspace_filter(query)
-        query = query.group_by(models.Subnet.tenant_id)
-        return dict(query.all())
+        query = query.group_by(
+            models.Subnet.tenant_id,
+            models.Subnet.network_id,
+            models.Subnet.ip_version)
+        ret = dict()
+        for tenant_id, network_id, ip_version, count in query.all():
+            ret[(tenant_id, network_id, ip_version)] = count
+        return ret
 
 
 def get_unused_ips(session, used_ips_counts):
@@ -100,10 +116,11 @@ def get_unused_ips(session, used_ips_counts):
         for tenant_id, subnet in query.all():
             net_size = netaddr.IPNetwork(subnet._cidr).size
             policy_size = models.IPPolicy.get_ip_policy_cidrs(subnet).size
-            ret[tenant_id] += net_size - policy_size
+            tuple_key = (tenant_id, subnet.network_id, subnet.ip_version)
+            ret[tuple_key] += net_size - policy_size
 
-        for tenant_id in used_ips_counts:
-            ret[tenant_id] -= used_ips_counts[tenant_id]
+        for tuple_key in used_ips_counts:
+            ret[tuple_key] -= used_ips_counts[tuple_key]
 
         return ret
 
