@@ -219,3 +219,15 @@ class Test2748e48cee3a(BaseMigrationTest):
         alembic_command.upgrade(self.config, '2748e48cee3a')
         with self.assertRaises(NotImplementedError):
             alembic_command.downgrade(self.config, '1284c81cf727')
+
+
+class Test45a07fac3d38(BaseMigrationTest):
+    def setUp(self):
+        super(Test45a07fac3d38, self).setUp()
+        alembic_command.upgrade(self.config, '1284c81cf727')
+
+
+class Test552b213c2b8c(BaseMigrationTest):
+    def setUp(self):
+        super(Test552b213c2b8c, self).setUp()
+        alembic_command.upgrade(self.config, '45a07fac3d38')
