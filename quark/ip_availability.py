@@ -47,13 +47,11 @@ def _rackspace_filter(query):
     public_network_id = "00000000-0000-0000-0000-000000000000"
     query = query.filter(models.Subnet.network_id == public_network_id)
     query = query.filter(models.Subnet.ip_version == 4)
-    query = query.filter(or_(models.Subnet.tenant_id.like("%-%"),
-                             models.Subnet.tenant_id == "rackspace"))
     return query
 
 
 def get_used_ips(session):
-    """Returns dictionary with keys tenant_id and value used IPs count.
+    """Returns dictionary with keys segment_id and value used IPs count.
 
     Used IP address count is determined by:
     - allocated IPs
@@ -65,9 +63,9 @@ def get_used_ips(session):
     """
     with session.begin():
         query = session.query(
-            models.Subnet.tenant_id,
+            models.Subnet.segment_id,
             func.count(models.IPAddress.address))
-        query = query.group_by(models.Subnet.tenant_id)
+        query = query.group_by(models.Subnet.segment_id)
         query = _rackspace_filter(query)
 
         window = text('interval %s second' % cfg.CONF.QUARK.ipam_reuse_after)
@@ -94,35 +92,35 @@ def get_used_ips(session):
             models.IPAddress._deallocated == 0,
             models.IPPolicyCIDR.id == None))
 
-        ret = ((tenant_id, address_count)
-               for tenant_id, address_count in query.all())
+        ret = ((segment_id, address_count)
+               for segment_id, address_count in query.all())
         return dict(ret)
 
 
 def get_unused_ips(session, used_ips_counts):
-    """Returns dictionary with key tenant_id, and value unused IPs count.
+    """Returns dictionary with key segment_id, and value unused IPs count.
 
     Unused IP address count is determined by:
     - adding subnet's cidr's size
     - subtracting IP policy exclusions on subnet
-    - subtracting used ips per tenant
+    - subtracting used ips per segment_id
     """
     with session.begin():
         query = session.query(
-            models.Subnet.tenant_id,
+            models.Subnet.segment_id,
             models.Subnet)
         query = _rackspace_filter(query)
-        query = query.group_by(models.Subnet.tenant_id, models.Subnet.id)
+        query = query.group_by(models.Subnet.segment_id, models.Subnet.id)
 
         ret = defaultdict(int)
-        for tenant_id, subnet in query.all():
+        for segment_id, subnet in query.all():
             net_size = netaddr.IPNetwork(subnet._cidr).size
             policy_size = (subnet["ip_policy"].size
                            if "ip_policy" in subnet
                            else 0)
-            ret[tenant_id] += net_size - policy_size
+            ret[segment_id] += net_size - policy_size
 
-        for tenant_id in used_ips_counts:
-            ret[tenant_id] -= used_ips_counts[tenant_id]
+        for segment_id in used_ips_counts:
+            ret[segment_id] -= used_ips_counts[segment_id]
 
         return ret
