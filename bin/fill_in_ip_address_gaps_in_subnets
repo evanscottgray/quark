@@ -111,8 +111,8 @@ def do(session):
             ipp = models.IPPolicy.get_ip_policy_cidrs(subnet)
             s = netaddr.IPNetwork(subnet.cidr)
             ips_to_insert = netaddr.IPSet(s) - ipp - netaddr.IPSet(addrs)
+            total_ips_to_insert += ips_to_insert.size
             if ips_to_insert.size > 0:
-                total_ips_to_insert += ips_to_insert.size
                 message += "\n"
                 message += "=" * 50
                 message += "\n"
@@ -120,7 +120,7 @@ def do(session):
                 message += "Network ID: %s\n" % subnet.network_id
                 message += "Subnet ID: %s\n" % subnet.id
                 message += "Number of IPs to insert: %s" % ips_to_insert.size
-            elif not args.dryrun:
+            if not args.dryrun:
                 for ip in ips_to_insert:
                     new_ip = dict(subnet_id=subnet.id,
                                   network_id=subnet.network.id,
@@ -135,7 +135,6 @@ def do(session):
                     ip_address["deallocated_at"] = timeutils.utcnow() - window
                     ip_address["created_at"] = timeutils.utcnow()
                     session.add(ip_address)
-                    total_ips_to_insert += 1
 
                 subnet.update(dict(next_auto_assign_ip=-1))
                 session.add(subnet)
@@ -163,5 +162,4 @@ if __name__ == "__main__":
                  " the '--config' option!")
     else:
         config.init(['--config-file', args.config_file])
-
     main()
