@@ -17,7 +17,6 @@
 #   https://github.com/asadoughi/quark/blob/oneoff_update/bin/oneoff
 #
 
-from collections import namedtuple
 from datetime import timedelta
 from oslo.config import cfg
 
@@ -39,12 +38,14 @@ def main():
     neutron_db_api.get_engine()
     do(neutron_db_api.get_session())
 
+
 def _rackspace_filter(query):
     private = '11111111-1111-1111-1111-111111111111'
     public = '00000000-0000-0000-0000-000000000000'
     query = query.filter(or_(models.Subnet.network_id == private,
                              models.Subnet.network_id == public))
     return query
+
 
 def send_email_to_neutron_list(message):
     hostname = socket.getfqdn()
@@ -62,12 +63,12 @@ def send_email_to_neutron_list(message):
            " /opt/rackstack/neutron/current/neutron/bin/"
            "fill_in_ip_address_gaps_in_subnets --confile-file"
            " /etc/neutron/neutron.conf "
-           % (message, hostname)
-          )
+           % (message, hostname))
     server = smtplib.SMTP('localhost')
     server.sendmail(fromaddr, toaddr, msg)
     server.quit()
     print("Email sent to %s" % toaddr)
+
 
 def do(session):
     # 1. get subnets with next_auto_assign_ip < first_ip or next_auto_assign_ip
@@ -85,7 +86,6 @@ def do(session):
         query = query.order_by(models.Subnet.segment_id)
         subnets = query.all()
 
-        
     # 2. figure out which subnets to update
     subnets_to_update = []
     for subnet, count in subnets:
@@ -110,12 +110,11 @@ def do(session):
             addrs = [_map(addr) for addr in query.all()]
             ipp = models.IPPolicy.get_ip_policy_cidrs(subnet)
             s = netaddr.IPNetwork(subnet.cidr)
-            y = netaddr.IPSet(s) - ipp - netaddr.IPSet(addrs)
-            ips_to_insert = netaddr.IPSet(y)
+            ips_to_insert = netaddr.IPSet(s) - ipp - netaddr.IPSet(addrs)
             if ips_to_insert.size > 0:
                 total_ips_to_insert += ips_to_insert.size
                 message += "\n"
-                message += "="*50
+                message += "=" * 50
                 message += "\n"
                 message += "SEGMENT ID/CELL: %s\n" % subnet.segment_id
                 message += "Network ID: %s\n" % subnet.network_id
@@ -127,21 +126,19 @@ def do(session):
                                   network_id=subnet.network.id,
                                   version=subnet.ip_version,
                                   address=ip)
-                    context = namedtuple('Context',
-                                         ['session'])(session=session)
                     ip_address = models.IPAddress()
                     ip_address.update(new_ip)
                     ip_address["address"] = int(ip.ipv6())
                     ip_address["address_readable"] = str(ip)
                     ip_address["_deallocated"] = 1
-                    ip_address["deallocated_at"] = (timeutils.utcnow() -
-                        timedelta(seconds=cfg.CONF.QUARK.ipam_reuse_after))
+                    window = timedelta(seconds=cfg.CONF.QUARK.ipam_reuse_after)
+                    ip_address["deallocated_at"] = timeutils.utcnow() - window
                     ip_address["created_at"] = timeutils.utcnow()
-                    context.session.add(ip_address)
+                    session.add(ip_address)
                     total_ips_to_insert += 1
 
                 subnet.update(dict(next_auto_assign_ip=-1))
-                context.session.add(subnet)
+                session.add(subnet)
 
     message += "\n\nTotal IPs to insert: %s\n" % total_ips_to_insert
     print(message)
@@ -161,9 +158,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if not args.config_file:
-        sys.exit(_("ERROR: Unable to find configuration file via the default"
-                   " search paths (~/.neutron/, ~/, /etc/neutron/, /etc/) and"
-                   " the '--config' option!"))
+        sys.exit("ERROR: Unable to find configuration file via the default"
+                 " search paths (~/.neutron/, ~/, /etc/neutron/, /etc/) and"
+                 " the '--config' option!")
     else:
         config.init(['--config-file', args.config_file])
 
