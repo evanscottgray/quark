@@ -17,21 +17,20 @@
 #   https://github.com/asadoughi/quark/blob/oneoff_update/bin/oneoff
 #
 
-from datetime import timedelta
-from oslo.config import cfg
-
-from neutron.common import config
-from neutron.db import api as neutron_db_api
-from oslo.utils import timeutils
-from quark.db import models
-
-from sqlalchemy import or_, func
-
 import argparse
-import netaddr
+from datetime import timedelta
 import smtplib
 import socket
 import sys
+
+import netaddr
+from neutron.common import config
+from neutron.db import api as neutron_db_api
+from oslo.config import cfg
+from oslo.utils import timeutils
+from sqlalchemy import or_, func
+
+from quark.db import models
 
 
 def main():
@@ -50,7 +49,7 @@ def _rackspace_filter(query):
 def send_email_to_neutron_list(message):
     hostname = socket.getfqdn()
     fromaddr = ("%s@localhost.com" % hostname)
-    #toaddr = 'neutron@lists.rackspace.com'
+    # toaddr = 'neutron@lists.rackspace.com'
     toaddr = 'jason.meridth@rackspace.com'
     msg = ("Running of Neutron fill_in_ip_address_gaps_in_subnets"
            " script.\n"
