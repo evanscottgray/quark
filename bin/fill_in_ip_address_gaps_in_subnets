@@ -1,0 +1,160 @@
+# Copyright 2014 Openstack Foundation
+# All Rights Reserved.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+#    not use this file except in compliance with the License. You may obtain
+#    a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+#    License for the specific language governing permissions and limitations
+#    under the License.
+#
+#   Original script found here:
+#   https://github.com/asadoughi/quark/blob/oneoff_update/bin/oneoff
+#
+
+from collections import namedtuple
+from datetime import timedelta
+from oslo.config import cfg
+
+from neutron.common import config
+from neutron.db import api as neutron_db_api
+from oslo.utils import timeutils
+from quark.db import models
+
+from sqlalchemy import or_, func
+
+import argparse
+import netaddr
+import sys
+
+
+def main():
+    neutron_db_api.get_engine()
+    do(neutron_db_api.get_session())
+
+
+def _rackspace_filter(query):
+    private = '11111111-1111-1111-1111-111111111111'
+    public = '00000000-0000-0000-0000-000000000000'
+    query = query.filter(or_(models.Subnet.network_id == private,
+                             models.Subnet.network_id == public))
+    return query
+
+
+def do(session):
+    # 1. get subnets with next_auto_assign_ip < first_ip or next_auto_assign_ip
+    #    > last_ip along with the number of IPs they have in the DB
+    with session.begin():
+        query = session.query(
+            models.Subnet,
+            func.count(models.IPAddress.id).label("count"))
+        query = query.filter(models.Subnet.id == models.IPAddress.subnet_id)
+        query = query.filter(models.Subnet.ip_version == 4)
+        if args.subnet_id:
+            query = query.filter(models.Subnet.id == args.subnet_id)
+        if args.segment_id:
+            query = query.filter(models.Subnet.segment_id == args.segment_id)
+        query = query.filter(or_(models.Subnet.do_not_use is None,
+                                 models.Subnet.do_not_use == 0))
+        query = _rackspace_filter(query)
+        if not args.complete_subnet:
+            query = query.filter(
+                or_(models.Subnet.next_auto_assign_ip < models.Subnet.first_ip,
+                    models.Subnet.next_auto_assign_ip > models.Subnet.last_ip))
+        query = query.group_by(models.Subnet.id)
+        query = query.order_by("count desc")
+        subnets = query.all()
+
+        
+    # 2. figure out which subnets to update
+    subnets_to_update = []
+    for subnet, count in subnets:
+        with session.begin():
+            ipp = models.IPPolicy.get_ip_policy_cidrs(subnet)
+            res = netaddr.IPSet(netaddr.IPNetwork(subnet._cidr)) - ipp
+            if count != res.size:
+                subnets_to_update.append(subnet)
+
+    # 3. figure out which IPs need to be put into the databse to fille
+    #    the gaps
+    total_ips_to_insert = 0
+    for subnet in subnets_to_update:
+        with session.begin():
+            query = session.query(models.IPAddress.address)
+            query = query.filter(subnet.id == models.IPAddress.subnet_id)
+
+            def _map(addr):
+                ip = netaddr.IPAddress(addr[0])
+                return ip.ipv4()
+            addrs = [_map(addr) for addr in query.all()]
+            ipp = models.IPPolicy.get_ip_policy_cidrs(subnet)
+            s = netaddr.IPNetwork(subnet.cidr)
+            y = netaddr.IPSet(s) - ipp - netaddr.IPSet(addrs)
+            ips_to_insert = netaddr.IPSet(y)
+            if ips_to_insert.size > 0:
+                print("Network ID: %s" % subnet.network_id)
+                print("Subnet ID/Segment ID: %s / %s" %
+                      (subnet.id, subnet.segment_id))
+                print("Number of IPs to insert: %s" % ips_to_insert.size)
+            if args.dryrun and ips_to_insert:
+                print("IPs to insert: %s" % ips_to_insert)
+                total_ips_to_insert += ips_to_insert.size
+            elif not args.dryrun:
+                for ip in ips_to_insert:
+                    new_ip = dict(subnet_id=subnet.id,
+                                  network_id=subnet.network.id,
+                                  version=subnet.ip_version,
+                                  address=ip)
+                    context = namedtuple('Context',
+                                         ['session'])(session=session)
+                    ip_address = models.IPAddress()
+                    ip_address.update(new_ip)
+                    ip_address["address"] = int(ip.ipv6())
+                    ip_address["address_readable"] = str(ip)
+                    ip_address["_deallocated"] = 1
+                    ip_address["deallocated_at"] = (timeutils.utcnow() -
+                        timedelta(seconds=cfg.CONF.QUARK.ipam_reuse_after))
+                    ip_address["created_at"] = timeutils.utcnow()
+                    context.session.add(ip_address)
+                    total_ips_to_insert += 1
+
+                subnet.update(dict(next_auto_assign_ip=-1))
+                context.session.add(subnet)
+
+    print("Total IPs to insert: %s" % total_ips_to_insert)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(prog='fill_in_ip_address_gaps_in_subnets')
+    parser.add_argument('--config-file', default=None,
+                        help='Specify a config file to use')
+    parser.add_argument('--dryrun', action='store_true',
+                        help='Do dry run.  No changes to database.')
+    parser.add_argument('--complete-subnet', action='store_true',
+                        help='Add all IPs to subnets to complete them')
+    parser.add_argument('--segment-id', default=None,
+                        help='Specify a specific cell to run this against.')
+    parser.add_argument('--subnet-id', default=None,
+                        help='Specify a subnet id to fun this against.')
+    args = parser.parse_args()
+
+    if args.subnet_id and args.segment_id:
+        sys.exit(_("ERROR: --subnet-id can't be used with --segment-id"))
+
+    if args.complete_subnet and not args.segment_id:
+        sys.exit(_("ERROR: Must specify --segement-id when"
+                   " using --complete-subnet"))
+
+    if not args.config_file:
+        sys.exit(_("ERROR: Unable to find configuration file via the default"
+                   " search paths (~/.neutron/, ~/, /etc/neutron/, /etc/) and"
+                   " the '--config' option!"))
+    else:
+        config.init(['--config-file', args.config_file])
+
+    main()
