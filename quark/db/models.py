@@ -161,6 +161,7 @@ class IPAddress(BASEV2, models.HasId):
                                      ip_types.SHARED,
                              name="quark_ip_address_types"))
     associations = orm.relationship(PortIpAssociation, backref="ip_address")
+    transaction_id = sa.Column(sa.String(36), nullable=True, index=True)
 
     def enabled_for_port(self, port):
         for assoc in self["associations"]:
