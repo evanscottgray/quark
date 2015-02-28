@@ -27,6 +27,7 @@ from sqlalchemy import func as sql_func
 from sqlalchemy import and_, asc, desc, orm, or_, not_
 
 from quark.db import models
+from quark.db import sqlalchemy_adapter as quark_sa
 from quark import network_strategy
 
 
@@ -313,7 +314,70 @@ def ip_address_find(context, lock_mode=False, **filters):
         model_filters.append(
             models.IPAddress.address_type == filters['address_type'])
 
+    if filters.get("transaction_id"):
+        model_filters.append(
+            models.IPAddress.transaction_id == filters['transaction_id'])
+
     return query.filter(*model_filters)
+
+
+@scoped
+def ip_address_reallocate(context, **filters):
+    LOG.debug("ip_address_reallocate %s", filters)
+    query = context.session.query(models.IPAddress)
+    model_filters = _model_query(context, models.IPAddress, filters)
+    query = query.filter(*model_filters)
+    transaction_id = uuidutils.generate_uuid()
+    row_count = quark_sa.update_limit(
+        query, {"transaction_id": transaction_id}, 1)
+    return transaction_id if row_count > 0 else None
+
+
+def ip_address_reallocate_find(context, transaction_id):
+    address = ip_address_find(context, transaction_id=transaction_id,
+                              scope=ONE)
+    if not address:
+        LOG.warn("Couldn't find IP address with transaction_id %s",
+                 transaction_id)
+        return
+
+    LOG.info("Potentially reallocatable IP found: "
+             "{0}".format(address["address_readable"]))
+    subnet = address.get('subnet')
+    if not subnet:
+        LOG.debug("No subnet associated with address")
+        return
+    if subnet["do_not_use"]:
+        LOG.debug("Subnet marked as do_not_use")
+        return
+
+    addr = netaddr.IPAddress(int(address["address"]))
+    if address["subnet"]["ip_version"] == 4:
+        addr = addr.ipv4()
+    else:
+        addr = addr.ipv6()
+
+    # TODO(amir): performance test replacing this with SQL in
+    #             ip_address_reallocate's UPDATE statement
+    policy = models.IPPolicy.get_ip_policy_cidrs(subnet)
+    if policy is not None and addr in policy:
+        LOG.info("Deleting Address {0} due to policy "
+                 "violation".format(
+                     address["address_readable"]))
+        context.session.delete(address)
+        return
+
+    # TODO(amir): performance test replacing this with SQL in
+    #             ip_address_reallocate's UPDATE statement
+    cidr = netaddr.IPNetwork(address["subnet"]["cidr"])
+    if addr not in cidr:
+        LOG.info("Address {0} isn't in the subnet "
+                 "it claims to be in".format(
+                     address["address_readable"]))
+        context.session.delete(address)
+        return
+
+    return address
 
 
 @scoped

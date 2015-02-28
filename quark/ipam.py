@@ -285,94 +285,47 @@ class QuarkIpam(object):
         sub_ids = []
         if subnets:
             sub_ids = subnets
-        else:
-            if segment_id:
-                subnets = db_api.subnet_find(elevated,
-                                             network_id=net_id,
-                                             segment_id=segment_id)
-                sub_ids = [s["id"] for s in subnets]
-                if not sub_ids:
-                    LOG.info("No subnets matching segment_id {0} could be "
-                             "found".format(segment_id))
-                    raise exceptions.IpAddressGenerationFailure(
-                        net_id=net_id)
+        elif segment_id:
+            subnets = db_api.subnet_find(elevated,
+                                         network_id=net_id,
+                                         segment_id=segment_id)
+            sub_ids = [s["id"] for s in subnets]
+            if not sub_ids:
+                LOG.info("No subnets matching segment_id {0} could be "
+                         "found".format(segment_id))
+                raise exceptions.IpAddressGenerationFailure(
+                    net_id=net_id)
 
         ip_kwargs = {
             "network_id": net_id, "reuse_after": reuse_after,
-            "deallocated": True, "scope": db_api.ONE,
-            "ip_address": ip_address, "lock_mode": True,
-            "version": version, "order_by": "address"}
-
+            "deallocated": True,
+            "ip_address": ip_address,
+            "version": version,
+        }
         if ip_address:
             del ip_kwargs["deallocated"]
-
         if sub_ids:
             ip_kwargs["subnet_id"] = sub_ids
 
-        # We never want to take the chance of an infinite loop here. Instead,
-        # we'll clean up multiple bad IPs if we find them (assuming something
-        # is really wrong)
         for retry in xrange(CONF.QUARK.ip_address_retry_max):
             LOG.info("Attempt {0} of {1}".format(
                 retry + 1, CONF.QUARK.ip_address_retry_max))
-            get_policy = models.IPPolicy.get_ip_policy_cidrs
-
             try:
-                with context.session.begin():
-                    # NOTE(mdietz): Before I removed the lazy=joined, this
-                    #               raised with an unknown column "address"
-                    #               error.
-                    address = db_api.ip_address_find(elevated, **ip_kwargs)
+                transaction_id = db_api.ip_address_reallocate(
+                    elevated, **ip_kwargs)
+                if not transaction_id:
+                    LOG.info("Couldn't update any reallocatable addresses "
+                             "given the criteria; retrying")
+                    continue
 
-                    if address:
-                        # NOTE(mdietz): We should always be in the CIDR but we
-                        #              also said that before :-/
-                        LOG.info("Potentially reallocatable IP found: "
-                                 "{0}".format(address["address_readable"]))
-                        subnet = address.get('subnet')
-                        if subnet:
-                            if subnet["do_not_use"]:
-                                continue
+                updated_address = db_api.ip_address_reallocate_find(
+                    elevated, transaction_id)
+                if not updated_address:
+                    continue
 
-                            policy = get_policy(subnet)
-
-                            cidr = netaddr.IPNetwork(address["subnet"]["cidr"])
-                            addr = netaddr.IPAddress(int(address["address"]))
-                            if address["subnet"]["ip_version"] == 4:
-                                addr = addr.ipv4()
-                            else:
-                                addr = addr.ipv6()
-
-                            if policy is not None and addr in policy:
-                                LOG.info("Deleting Address {0} due to policy "
-                                         "violation".format(
-                                             address["address_readable"]))
-
-                                context.session.delete(address)
-                                continue
-                            if addr in cidr:
-                                LOG.info("Marking Address {0} as "
-                                         "allocated".format(
-                                             address["address_readable"]))
-                                updated_address = db_api.ip_address_update(
-                                    elevated, address, deallocated=False,
-                                    deallocated_at=None,
-                                    used_by_tenant_id=context.tenant_id,
-                                    allocated_at=timeutils.utcnow(),
-                                    port_id=port_id,
-                                    address_type=kwargs.get('address_type',
-                                                            ip_types.FIXED))
-                                return [updated_address]
-                            else:
-                                # Make sure we never find it again
-                                LOG.info("Address {0} isn't in the subnet "
-                                         "it claims to be in".format(
-                                             address["address_readable"]))
-                                context.session.delete(address)
-                    else:
-                        LOG.info("Couldn't find any reallocatable addresses "
-                                 "given the criteria")
-                        break
+                LOG.info("Address {0} is reallocated".format(
+                    updated_address["address_readable"]))
+                return [updated_address]
             except Exception:
                 LOG.exception("Error in reallocate ip...")
         return []
