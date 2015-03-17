@@ -17,6 +17,7 @@
 View Helpers for Quark Plugin
 """
 
+import json
 import netaddr
 from oslo.config import cfg
 from oslo_log import log as logging
@@ -95,16 +96,23 @@ def _pools_from_cidr(cidr):
     return pools
 
 
+def _allocation_pools(subnet):
+    _cache = subnet.get("_allocation_pool_cache")
+    if _cache:
+        pools = json.loads(_cache)
+        return pools
+    else:
+        ip_policy_cidrs = models.IPPolicy.get_ip_policy_cidrs(subnet)
+        cidr = netaddr.IPSet([netaddr.IPNetwork(subnet["cidr"])])
+        allocatable = cidr - ip_policy_cidrs
+        pools = _pools_from_cidr(allocatable)
+        return pools
+
+
 def _make_subnet_dict(subnet, fields=None):
     dns_nameservers = [str(netaddr.IPAddress(dns["ip"]))
                        for dns in subnet.get("dns_nameservers")]
     net_id = STRATEGY.get_parent_network(subnet["network_id"])
-
-    def _allocation_pools(subnet):
-        ip_policy_cidrs = models.IPPolicy.get_ip_policy_cidrs(subnet)
-        cidr = netaddr.IPSet([netaddr.IPNetwork(subnet["cidr"])])
-        allocatable = cidr - ip_policy_cidrs
-        return _pools_from_cidr(allocatable)
 
     res = {"id": subnet.get("id"),
            "name": subnet.get("name"),
