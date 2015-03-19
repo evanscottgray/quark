@@ -74,41 +74,6 @@ def _make_network_dict(network, fields=None):
     return res
 
 
-def _pools_from_cidr(cidr):
-    cidrs = cidr.iter_cidrs()
-    if len(cidrs) == 0:
-        return []
-    if len(cidrs) == 1:
-        return [dict(start=str(cidrs[0][0]),
-                     end=str(cidrs[0][-1]))]
-
-    pool_start = cidrs[0][0]
-    prev_cidr_end = cidrs[0][-1]
-    pools = []
-    for cidr in cidrs[1:]:
-        cidr_start = cidr[0]
-        if prev_cidr_end + 1 != cidr_start:
-            pools.append(dict(start=str(pool_start),
-                              end=str(prev_cidr_end)))
-            pool_start = cidr_start
-        prev_cidr_end = cidr[-1]
-    pools.append(dict(start=str(pool_start), end=str(prev_cidr_end)))
-    return pools
-
-
-def _allocation_pools(subnet):
-    _cache = subnet.get("_allocation_pool_cache")
-    if _cache:
-        pools = json.loads(_cache)
-        return pools
-    else:
-        ip_policy_cidrs = models.IPPolicy.get_ip_policy_cidrs(subnet)
-        cidr = netaddr.IPSet([netaddr.IPNetwork(subnet["cidr"])])
-        allocatable = cidr - ip_policy_cidrs
-        pools = _pools_from_cidr(allocatable)
-        return pools
-
-
 def _make_subnet_dict(subnet, fields=None):
     dns_nameservers = [str(netaddr.IPAddress(dns["ip"]))
                        for dns in subnet.get("dns_nameservers")]
@@ -128,7 +93,7 @@ def _make_subnet_dict(subnet, fields=None):
         res['ip_policy_id'] = subnet.get("ip_policy_id")
 
     if CONF.QUARK.show_allocation_pools:
-        res["allocation_pools"] = _allocation_pools(subnet)
+        res["allocation_pools"] = subnet.allocation_pools()
     else:
         res["allocation_pools"] = []
 

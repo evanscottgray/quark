@@ -350,12 +350,13 @@ def get_subnet(context, id, fields=None):
     net_id = subnet["network_id"]
     net_id = STRATEGY.get_parent_network(net_id)
     subnet["network_id"] = net_id
-    retval = v._make_subnet_dict(subnet)
-    cache = retval.get("_allocation_pool_cache")
+
+    cache = subnet.get("_allocation_pool_cache")
     if not cache:
-        new_cache = v._allocation_pools(subnet)
+        new_cache = subnet.allocation_pools(subnet)
         set_allocation_pool_cache(context, subnet, new_cache)
-    return retval
+
+    return v._make_subnet_dict(subnet)
 
 
 def get_subnets(context, limit=None, page_reverse=False, sorts=None,
@@ -388,7 +389,7 @@ def get_subnets(context, limit=None, page_reverse=False, sorts=None,
         cache = subnet.get("_allocation_pool_cache")
         if not cache:
             set_allocation_pool_cache(context, subnet,
-                                      v._allocation_pools(subnet))
+                                      subnet.allocation_pools())
     return v._make_subnets_list(subnets, fields=fields)
 
 
