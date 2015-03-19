@@ -259,6 +259,7 @@ class Subnet(BASEV2, models.HasId, IsHazTags):
     def cidr(self):
         return self._cidr
 
+    @hybrid.hybrid_property
     def allocation_pools(self):
         _cache = self.get("_allocation_pool_cache")
         if _cache:

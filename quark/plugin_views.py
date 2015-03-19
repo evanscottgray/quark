@@ -91,7 +91,7 @@ def _make_subnet_dict(subnet, fields=None):
         res['ip_policy_id'] = subnet.get("ip_policy_id")
 
     if CONF.QUARK.show_allocation_pools:
-        res["allocation_pools"] = subnet.allocation_pools()
+        res["allocation_pools"] = subnet.allocation_pools
     else:
         res["allocation_pools"] = []
 

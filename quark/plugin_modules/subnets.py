@@ -353,7 +353,7 @@ def get_subnet(context, id, fields=None):
 
     cache = subnet.get("_allocation_pool_cache")
     if not cache:
-        new_cache = subnet.allocation_pools()
+        new_cache = subnet.allocation_pools
         set_allocation_pool_cache(context, subnet, new_cache)
 
     return v._make_subnet_dict(subnet)
@@ -389,7 +389,7 @@ def get_subnets(context, limit=None, page_reverse=False, sorts=None,
         cache = subnet.get("_allocation_pool_cache")
         if not cache:
             set_allocation_pool_cache(context, subnet,
-                                      subnet.allocation_pools())
+                                      subnet.allocation_pools)
     return v._make_subnets_list(subnets, fields=fields)
 
 
