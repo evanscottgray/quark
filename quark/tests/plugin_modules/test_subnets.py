@@ -225,16 +225,17 @@ class TestQuarkCreateSubnetAllocationPools(test_quark_plugin.TestQuarkPlugin):
     @contextlib.contextmanager
     def _stubs(self, subnet):
         s = models.Subnet(network=models.Network(id=1, subnets=[]))
-        allocation_pools = subnet.pop("allocation_pools", [])
+        allocation_pools = subnet.pop("allocation_pools", None)
         s.update(subnet)
-        subnet["allocation_pools"] = allocation_pools
+        if allocation_pools is not None:
+            subnet["allocation_pools"] = allocation_pools
 
         with contextlib.nested(
             mock.patch("quark.db.api.network_find"),
             mock.patch("quark.db.api.subnet_find"),
             mock.patch("quark.db.api.subnet_create"),
             mock.patch("neutron.common.rpc.get_notifier"),
-            mock.patch.object(models.Subnet, "allocation_pools")
+            mock.patch.object(models.Subnet, "allocation_pools") if allocation_pools is not None else mock.MagicMock()
         ) as (net_find, subnet_find, subnet_create, get_notifier,
               alloc_pools_method):
             net_find.return_value = s["network"]
@@ -375,13 +376,14 @@ class TestQuarkCreateSubnet(test_quark_plugin.TestQuarkPlugin):
             network=models.Network(id=1) if network else None)
         dns_ips = subnet.pop("dns_nameservers", [])
         host_routes = subnet.pop("host_routes", [])
-        allocation_pools = subnet.pop("allocation_pools", [])
+        allocation_pools = subnet.pop("allocation_pools", None)
 
         subnet_mod.update(subnet)
 
         subnet["dns_nameservers"] = dns_ips
         subnet["host_routes"] = host_routes
-        subnet["allocation_pools"] = allocation_pools
+        if allocation_pools is not None:
+            subnet["allocation_pools"] = allocation_pools
         dns = [{"ip": x} for x in dns]
         route_models = [models.Route(**r) for r in routes]
         dns_models = [models.DNSNameserver(**d) for d in dns]
@@ -393,7 +395,7 @@ class TestQuarkCreateSubnet(test_quark_plugin.TestQuarkPlugin):
             mock.patch("quark.db.api.route_create"),
             mock.patch("quark.db.api.subnet_find"),
             mock.patch("neutron.common.rpc.get_notifier"),
-            mock.patch.object(models.Subnet, "allocation_pools")
+            mock.patch.object(models.Subnet, "allocation_pools") if allocation_pools is not None else mock.MagicMock()
         ) as (subnet_create, net_find, dns_create, route_create, subnet_find,
               get_notifier, alloc_pools_method):
             subnet_create.return_value = subnet_mod
