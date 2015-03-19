@@ -13,6 +13,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import json
+
 import netaddr
 import neutron.db.model_base
 from neutron.db import models_v2 as models
@@ -264,8 +266,8 @@ class Subnet(BASEV2, models.HasId, IsHazTags):
             return pools
         else:
             # Optionally: set cache here? no context :\
-            ip_policy_cidrs = models.IPPolicy.get_ip_policy_cidrs(subnet)
-            cidr = netaddr.IPSet([netaddr.IPNetwork(subnet["cidr"])])
+            ip_policy_cidrs = IPPolicy.get_ip_policy_cidrs(self)
+            cidr = netaddr.IPSet([netaddr.IPNetwork(self["cidr"])])
             allocatable = cidr - ip_policy_cidrs
             pools = _pools_from_cidr(allocatable)
             return pools
