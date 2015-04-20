@@ -13,6 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #
 
+from random import shuffle
 import functools
 import json
 import string
@@ -136,6 +137,9 @@ class ClientBase(object):
     def _compile_sentinel_list(self):
         self._sentinel_list = [tuple(host.split(':'))
                                for host in CONF.QUARK.redis_sentinel_hosts]
+        # NOTE(asadoughi): RM12113: shuffle list of sentinels to distribute
+        #                           connection load
+        shuffle(self._sentinel_list)
         if not self._sentinel_list:
             raise TypeError("sentinel_list is not a properly formatted"
                             "list of 'host:port' pairs")
